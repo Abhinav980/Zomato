@@ -1,0 +1,106 @@
+# Zomato Restaurants Data Analysis & Recommendation System
+
+# --- Import Required Libraries ---
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import CountVectorizer
+from collections import Counter
+
+# --- Step 1: Load the Dataset ---
+df = pd.read_csv("zomato.csv", encoding='latin-1')
+
+# --- Step 2: Clean and Prepare the Data ---
+df.columns = df.columns.str.lower().str.replace(' ', '_')  # Normalize column names
+df_india = df[df['country_code'] == 1].copy()  # Filter only Indian restaurants
+df_india = df_india.dropna(subset=['cuisines', 'aggregate_rating', 'votes'])  # Drop rows with missing critical data
+
+# --- Step 3: Top 10 Cities with Most Restaurants ---
+top_cities = df_india['city'].value_counts().head(10)
+
+plt.figure(figsize=(10, 6))
+sns.barplot(x=top_cities.values, y=top_cities.index, palette='viridis')
+plt.title("Top 10 Indian Cities with Most Restaurants")
+plt.xlabel("Number of Restaurants")
+plt.ylabel("City")
+plt.tight_layout()
+plt.show()
+
+# --- Step 4: Distribution of Average Cost for Two ---
+plt.figure(figsize=(10, 6))
+sns.histplot(df_india['average_cost_for_two'], bins=30, kde=True, color='skyblue')
+plt.title("Distribution of Average Cost for Two (India)")
+plt.xlabel("Cost (INR)")
+plt.tight_layout()
+plt.show()
+
+# --- Step 5: Distribution of Aggregate Ratings ---
+plt.figure(figsize=(8, 5))
+sns.histplot(df_india[df_india['aggregate_rating'] > 0]['aggregate_rating'], bins=20, kde=True, color='coral')
+plt.title("Distribution of Restaurant Ratings (India)")
+plt.xlabel("Aggregate Rating")
+plt.tight_layout()
+plt.show()
+
+# --- Step 6: Top 10 Most Common Cuisines ---
+cuisine_series = df_india['cuisines'].dropna().apply(lambda x: [c.strip() for c in x.split(',')])
+cuisine_counts = Counter([item for sublist in cuisine_series for item in sublist])
+top_cuisines = pd.DataFrame(cuisine_counts.most_common(10), columns=['Cuisine', 'Count'])
+
+plt.figure(figsize=(10, 6))
+sns.barplot(data=top_cuisines, x='Count', y='Cuisine', palette='magma')
+plt.title("Top 10 Most Common Cuisines (India)")
+plt.xlabel("Number of Restaurants")
+plt.ylabel("Cuisine")
+plt.tight_layout()
+plt.show()
+
+# --- Step 7: Build the Restaurant Recommendation System ---
+
+# Filter and prepare the data
+rec_df = df_india[['restaurant_name', 'city', 'cuisines', 'average_cost_for_two', 'aggregate_rating']].dropna().drop_duplicates()
+
+# Combine cuisine and city as features for text similarity
+rec_df['combined'] = rec_df['cuisines'] + " " + rec_df['city']
+
+# Convert text features into vectors
+vectorizer = CountVectorizer(stop_words='english')
+feature_matrix = vectorizer.fit_transform(rec_df['combined'])
+
+# Normalize cost and rating for numeric similarity
+cost_rating = rec_df[['average_cost_for_two', 'aggregate_rating']]
+cost_rating = (cost_rating - cost_rating.min()) / (cost_rating.max() - cost_rating.min())
+
+# Calculate similarities
+text_sim = cosine_similarity(feature_matrix)
+num_sim = cosine_similarity(cost_rating)
+
+# Weighted combination of text and numeric similarities
+combined_sim = 0.7 * text_sim + 0.3 * num_sim
+
+# --- Step 8: Recommendation Function ---
+def recommend_restaurants(name, top_n=5):
+    """
+    Recommend similar restaurants based on cuisine, city, cost, and rating.
+
+    Parameters:
+    name (str): The name of the restaurant to find similar ones to.
+    top_n (int): Number of similar restaurants to return.
+
+    Returns:
+    DataFrame: Top recommended restaurants.
+    """
+    name = name.lower()
+    if name not in rec_df['restaurant_name'].str.lower().values:
+        return f"\u274c Restaurant '{name}' not found."
+
+    idx = rec_df[rec_df['restaurant_name'].str.lower() == name].index[0]
+    sim_scores = list(enumerate(combined_sim[idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    top_indices = [i for i, score in sim_scores[1:top_n+1]]
+
+    return rec_df.iloc[top_indices][['restaurant_name', 'city', 'cuisines', 'average_cost_for_two', 'aggregate_rating']]
+
+# --- Example usage ---
+# recommend_restaurants("Domino's Pizza")
